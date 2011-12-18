@@ -42,41 +42,39 @@ extern const char	IPv4_ALL[];
 extern FILE*  g_flog;
 extern volatile sig_atomic_t g_quit;
 
-int calc_buf_settings( ssize_t* bufmsgs, size_t* sock_buflen )
+static int calc_buf_settings( ssize_t* bufmsgs, size_t* sock_buflen )
 {
-    ssize_t nmsgs = -1, max_buf_used = -1, env_snd_buflen = -1;
-    size_t buflen = 0;
+	ssize_t nmsgs = -1, max_buf_used = -1, env_snd_buflen = -1;
+	size_t buflen = 0;
 
-    /* how many messages should we process? */
-    nmsgs = (g_uopt.rbuf_msgs > 0) ? g_uopt.rbuf_msgs :
-             (int)g_uopt.rbuf_len / ETHERNET_MTU;
+	nmsgs = ( g_uopt.rbuf_msgs > 0 ) ? g_uopt.rbuf_msgs :
+			( int )g_uopt.rbuf_len / ETHERNET_MTU;
 
-    /* how many bytes could be written at once
-        * to the send socket */
-    max_buf_used = (g_uopt.rbuf_msgs > 0)
-        ? (ssize_t)(nmsgs * ETHERNET_MTU) : g_uopt.rbuf_len;
-    if (max_buf_used > g_uopt.rbuf_len) {
-        max_buf_used = g_uopt.rbuf_len;
-    }
+	max_buf_used = ( g_uopt.rbuf_msgs > 0 )
+		? ( ssize_t )( nmsgs * ETHERNET_MTU ) : g_uopt.rbuf_len;
+	if( max_buf_used > g_uopt.rbuf_len ) {
+		max_buf_used = g_uopt.rbuf_len;
+	}
 
-    assert( max_buf_used >= 0 );
+	assert( max_buf_used >= 0 );
 
-    env_snd_buflen = get_sizeval( "UDPXY_SOCKBUF_LEN", 0);
-    buflen = (env_snd_buflen > 0) ? (size_t)env_snd_buflen : (size_t)max_buf_used;
+	env_snd_buflen = get_sizeval( "UDPXY_SOCKBUF_LEN", 0);
+	buflen = ( env_snd_buflen > 0 ) ? ( size_t )env_snd_buflen : ( size_t )max_buf_used;
 
-    if (buflen < (size_t) MIN_SOCKBUF_LEN) {
-        buflen = (size_t) MIN_SOCKBUF_LEN;
-    }
+	if( buflen < ( size_t ) MIN_SOCKBUF_LEN ) {
+		buflen = ( size_t ) MIN_SOCKBUF_LEN;
+	}
 
-    /* cannot go below the size of effective usage */
-    if( buflen < (size_t)max_buf_used ) {
-        buflen = (size_t)max_buf_used;
-    }
+	if( buflen < ( size_t )max_buf_used ) {
+		buflen = ( size_t )max_buf_used;
+	}
 
-    if (bufmsgs) *bufmsgs = nmsgs;
-    if (sock_buflen) *sock_buflen = buflen;
+	if( bufmsgs )
+		*bufmsgs = nmsgs;
+	if( sock_buflen )
+		*sock_buflen = buflen;
 
-    return 0;
+	return 0;
 }
 
 static sig_atomic_t must_quit() {
@@ -98,65 +96,12 @@ static void check_mcast_refresh( int msockfd, time_t* last_tm, const struct in_a
 	return;
 }
 
-static int pause_detect( int ntrans, time_t* p_pause )
-{
-	time_t now = 0;
-	const double MAX_PAUSE_SEC = 5.0;
-
-	assert( p_pause );
-
-	/* timeshift: detect PAUSE by would-block error */
-	if( IO_BLK == ntrans ) {
-		now = time( NULL );
-
-		if (*p_pause) {
-			if( difftime(now, *p_pause) > MAX_PAUSE_SEC ) {
-				return -1;
-			}
-		} else {
-			*p_pause = now;
-		}
-	} else {
-		if( *p_pause ) {
-			*p_pause = 0;
-		}
-	}
-
-	return 0;
-}
-
-static int sync_dsockbuf_len( int ssockfd, int dsockfd )
-{
-	size_t curr_sendbuf_len = 0, curr_rcvbuf_len = 0;
-	int rc = 0;
-
-	if( 0 != g_uopt.nosync_dbuf ) {
-		return 0;
-	}
-
-	assert( ssockfd && dsockfd );
-
-	rc = get_sendbuf( dsockfd, &curr_sendbuf_len );
-	if( 0 != rc )
-		return rc;
-
-	rc = get_rcvbuf( ssockfd, &curr_rcvbuf_len );
-	if( 0 != rc )
-		return rc;
-
-	if ( curr_rcvbuf_len > curr_sendbuf_len ) {
-		rc = set_sendbuf( dsockfd, curr_rcvbuf_len );
-	}
-
-	return rc;
-}
-
 class udp_proxy {
 
 private:
 	struct in_addr		mcast_inaddr;
 	char				mcast_addr[ IPADDR_STR_SIZE ];
-	int					dsockfd;
+	int					dfilefd;
 	FILE*				mlog;
 	
 	void setError( const char *error_msg ) {
@@ -270,20 +215,8 @@ private:
 		( void )set_nice( g_uopt.nice_incr, g_flog );
 
 		do {
-			if( dsockfd > 0 ) {
-				//rc = sync_dsockbuf_len( ssockfd, dsockfd );
-				//if( 0 != rc )
-				//	break;
-
-				/* timeshift: to detect PAUSE make destination
-				 * socket non-blocking, otherwise make it blocking
-				 * (since it might have been set unblocking earlier)
-				 */
-				//rc = set_nblock( dsockfd, (ALLOW_PAUSES ? 1 : 0) );
-				//if( 0 != rc ) break;
-			}
-
 			data = ( char * )malloc( data_len );
+
 			if( NULL == data ) {
 				break;
 			}
@@ -307,27 +240,15 @@ private:
 
 			lrcv = nrcv;
 
-			if( dsockfd && ( nrcv > 0 ) ) {
-				nsent = write_data( &ds, data, nrcv, dsockfd );
+			if(  ( nrcv > 0 ) ) {
+				if( dfilefd ) {
+					nsent = write_data( &ds, data, nrcv, dfilefd );
+				} else {
+					nsent = this->my_write_data( &ds, data, nrcv );
+				}
 				if( -1 == nsent )
 					break;
 
-				//if( nsent < 0 ) {
-					//if( !ALLOW_PAUSES )
-					//	break;
-					//if ( 0 != pause_detect( nsent, &pause_time ) )
-					//	break;
-				//}
-
-				lsent = nsent;
-			}
-
-			if( !dsockfd && ( nrcv > 0 ) ) {
-				//nsent = this->call_write( data, nrcv );
-				//nsent = PerlIO_write( PerlIO_stdout(), data, nrcv );
-				nsent = this->my_write_data( &ds, data, nrcv );
-				if( -1 == nsent )
-					break;
 				lsent = nsent;
 			}
 
@@ -354,6 +275,7 @@ public:
 
 		int					rc = 0;
 		rc = init_uopt( &g_uopt );
+		struct stat sb;
 
 		if( rc ) {
 			setError( "Unable to init default parameters" );
@@ -379,6 +301,9 @@ public:
 					} else if( SvTYPE( val ) == SVt_PV ) {
 						val_pv = SvPV( val, val_length );
 						log = PerlIO_open( val_pv, "w" );
+						if( log == Nullfp ) {
+							croak( "Unable to open log file\n" );
+						}
 					}
 				} else if( strcasecmp( key, "handle" ) == 0 ) {
 					if( SvTYPE( val ) == SVt_PVGV ) {
@@ -388,9 +313,10 @@ public:
 					} else if( SvTYPE( val ) == SVt_PV ) {
 						val_pv = SvPV( val, val_length );
 						handle = PerlIO_open( val_pv, "w" );
+						if( handle == Nullfp ) {
+							croak( "Unable to open output file %s\n", val_pv );
+						}
 					}
-					g_flog = PerlIO_exportFILE( log, 0 );
-					setvbuf( g_flog, NULL, _IONBF, 0 );
 				}
 			}
 		}
@@ -406,9 +332,9 @@ public:
 		g_flog = PerlIO_exportFILE( log, 0 );
 		setvbuf( g_flog, NULL, _IONBF, 0 );
 		if( handle ) {
-			dsockfd = PerlIO_fileno( handle );
+			dfilefd = PerlIO_fileno( handle );
 		} else {
-			dsockfd = 0;
+			dfilefd = 0;
 		}
 	}
 

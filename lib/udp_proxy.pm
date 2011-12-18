@@ -26,7 +26,7 @@ our @EXPORT = qw(
 	
 );
 
-our $VERSION = '0.01';
+our $VERSION = '0.02';
 
 require XSLoader;
 XSLoader::load( 'udp_proxy', $VERSION );
@@ -77,6 +77,24 @@ udp_proxy - Perl binding for udpxy
 
 This module binds some udpxy functional to perl. It is possible to
 record or transfer unscrambled multicast traffic.
+
+=head1 METHODS
+
+=over 4
+
+=item my $uph = new udp_proxy( %args );
+
+Method new creates object udp_proxy with some parameters:
+ - interface - interface on which object should receive multicast traffic
+ - log - filehandle or filename of log file.
+ - handle - filehandle or filename for writing MPEG-TS packets.
+
+=item $uph->do_relay( $command, $host, $port );
+
+Method that actualy do the work. Writing data to STDOUT or speciefied handle.
+ $command - possible values 'rtp' or 'udp'
+ $host - multicast host to which object should join
+ $port - port on which transmission is going.
 
 =head2 EXPORT
 
